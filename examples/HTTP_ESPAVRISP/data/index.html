@@ -1,0 +1,506 @@
+<!DOCTYPE HTML>
+<html>
+<head>
+<meta http-equiv="Content-type" content="text/html;charset=UTF-8">
+<title>Arduino Uno Update OTA</title>
+<style type='text/css'>
+body {
+    font-family: sans-serif;
+}
+</style>
+<script type='text/javascript'>
+
+// *****************[ STK Special constants ]***************************
+var CRC_EOP               = 0x20  // 'SPACE'
+// *****************[ STK Command constants ]***************************
+var STK_GET_SYNC          = 0x30  // ' '
+var STK_GET_SIGN_ON       = 0x31  // ' '
+var STK_RESET             = 0x32  // ' '
+var STK_SINGLE_CLOCK      = 0x33  // ' '
+var STK_STORE_PARAMETERS  = 0x34  // ' '
+var STK_SET_PARAMETER     = 0x40  // ' '
+var STK_GET_PARAMETER     = 0x41  // ' '
+var STK_SET_DEVICE        = 0x42  // ' '
+var STK_GET_DEVICE        = 0x43  // ' '
+var STK_GET_STATUS        = 0x44  // ' '
+var STK_SET_DEVICE_EXT    = 0x45  // ' '
+var STK_ENTER_PROGMODE    = 0x50  // ' '
+var STK_LEAVE_PROGMODE    = 0x51  // ' '
+var STK_CHIP_ERASE        = 0x52  // ' '
+var STK_CHECK_AUTOINC     = 0x53  // ' '
+var STK_CHECK_DEVICE      = 0x54  // ' '
+var STK_LOAD_ADDRESS      = 0x55  // ' '
+var STK_UNIVERSAL         = 0x56  // ' '
+var STK_PROG_FLASH        = 0x60  // ' '
+var STK_PROG_DATA         = 0x61  // ' '
+var STK_PROG_FUSE         = 0x62  // ' '
+var STK_PROG_LOCK         = 0x63  // ' '
+var STK_PROG_PAGE         = 0x64  // ' '
+var STK_PROG_FUSE_EXT     = 0x65  // ' '
+var STK_READ_FLASH        = 0x70  // ' '
+var STK_READ_DATA         = 0x71  // ' '
+var STK_READ_FUSE         = 0x72  // ' '
+var STK_READ_LOCK         = 0x73  // ' '
+var STK_READ_PAGE         = 0x74  // ' '
+var STK_READ_SIGN         = 0x75  // ' '
+var STK_READ_OSCCAL       = 0x76  // ' '
+var STK_READ_FUSE_EXT     = 0x77  // ' '
+var STK_READ_OSCCAL_EXT   = 0x78  // ' '
+// *****************[ STK Parameter constants ]***************************
+var Parm_STK_HW_VER         = 0x80  // ' ' - R
+var Parm_STK_SW_MAJOR       = 0x81  // ' ' - R
+var Parm_STK_SW_MINOR       = 0x82  // ' ' - R
+var Parm_STK_LEDS           = 0x83  // ' ' - R/W
+var Parm_STK_VTARGET        = 0x84  // ' ' - R/W
+var Parm_STK_VADJUST        = 0x85  // ' ' - R/W
+var Parm_STK_OSC_PSCALE     = 0x86  // ' ' - R/W
+var Parm_STK_OSC_CMATCH     = 0x87  // ' ' - R/W
+var Parm_STK_RESET_DURATION = 0x88  // ' ' - R/W
+var Parm_STK_SCK_DURATION   = 0x89  // ' ' - R/W
+var Parm_STK_BUFSIZEL       = 0x90  // ' ' - R/W, Range {0..255}
+var Parm_STK_BUFSIZEH       = 0x91  // ' ' - R/W, Range {0..255}
+var Parm_STK_DEVICE         = 0x92  // ' ' - R/W, Range {0..255}
+var Parm_STK_PROGMODE       = 0x93  // ' ' - 'P' or 'S'
+var Parm_STK_PARAMODE       = 0x94  // ' ' - TRUE or FALSE
+var Parm_STK_POLLING        = 0x95  // ' ' - TRUE or FALSE
+var Parm_STK_SELFTIMED      = 0x96  // ' ' - TRUE or FALSE
+var PAGE_SIZE				= 128;	// programmed page size
+var STATE_STOP				= 0xff;
+
+var markup;
+var gCmd = new Uint8Array(1024);
+var gCmdLen = 0;
+var gState = STATE_STOP;
+var gdata_hex = []
+var gdata_hex_len = 0
+var gdata_hex_pages_cnt = 0
+var gCnt = 0;
+var gProgWrite = 1;
+var gTestState = 0;
+
+var DEBUG = 0;
+
+var gSyncCmd 		  	  = [ STK_GET_SYNC, CRC_EOP ]
+var gGetParamMajorCmd 	  = [ STK_GET_PARAMETER, Parm_STK_SW_MAJOR, CRC_EOP ]
+var gGetParamMinorCmd	  = [ STK_GET_PARAMETER, Parm_STK_SW_MINOR, CRC_EOP ]
+var gStkSetDevCmd	  	  = [ STK_SET_DEVICE, Parm_STK_OSC_PSCALE, 0x00, 0x00, 0x01, 0x01, 0x01, 0x01, 0x03, 0xff, 0xff, 
+							  0xff, 0xff, 0x00, 0x80, 0x04, 0x00, 0x00, 0x00, 0x80, 0x00 ,CRC_EOP ];
+var gStkSetDevExtCmd	  = [ STK_SET_DEVICE_EXT, 0x05, 0x04, 0xD7, 0xC2, 0x00, CRC_EOP ]
+var gEnterProgramModeCmd  = [ STK_ENTER_PROGMODE, CRC_EOP ]
+var gReadSignCmd		  = [ STK_READ_SIGN, CRC_EOP ]
+var gUniversalCmd		  = [ STK_UNIVERSAL, 0xA0, 0x03, 0xFC, 0x00, CRC_EOP ]
+var gUniversal2Cmd		  = [ STK_UNIVERSAL, 0xA0, 0x03, 0xFF, 0x00, CRC_EOP ]
+var gReadPageCmd		  = [ STK_READ_PAGE, 0x00, 0x80, 0x46, CRC_EOP ] // 0x46 = 'F'
+var gLeavProgCmd		  = [ STK_LEAVE_PROGMODE, CRC_EOP ]
+
+function Init()
+{
+	document.getElementById('file_sts').textContent = "File not loaded yet";
+}
+
+function OnLoadFile() {
+	var input, file, fr;
+
+	if (typeof window.FileReader !== 'function') {
+		bodyAppend("p", "The file API isn't supported on this browser yet.");
+		return;
+	}
+
+	input = document.getElementById('fileinput');
+	if (!input) {
+		bodyAppend("p", "File input could not be found.");
+	}
+	else if (!input.files) {
+		bodyAppend("p", "This browser doesn't seem to support the `files` property of file inputs.");
+	} else {
+		file = input.files[0];
+		fr = new FileReader();
+		fr.onload = receivedText;
+		fr.readAsText(file);
+	}
+
+	function receivedText() {
+		var error = 0;
+		gdata_hex = []
+		error = getHex(fr.result)
+		if(error == 0){
+			gdata_hex_len = gdata_hex.length;
+			gdata_hex_pages_cnt = Math.ceil(gdata_hex_len/128);
+			document.getElementById('file_sts').textContent = "File loaded";
+		}else{
+			gdata_hex_len = 0;
+			gdata_hex_pages_cnt = 0;
+			document.getElementById('file_sts').textContent = "Hex file wrong format";
+		}
+	}
+
+	function receivedBinary() {
+		showResult(fr, "Binary");
+	}
+}
+
+function showResult(fr, label) {
+	var result, n, aByte, byteStr;
+
+	result = fr.result;
+	bodyAppend("p", label + " (" + result.length + "):");
+	bodyAppend("pre", result);
+}
+
+function bodyAppend(tagName, innerHTML) {
+	var elm;
+
+	elm = document.createElement(tagName);
+	elm.innerHTML = innerHTML;
+	document.body.appendChild(elm);
+}
+
+function parseHexString(str) { 
+    var result = [];
+	var len = str.length;
+    while (len > 0) { 
+        result.push(parseInt(str.substring(0, 2), 16));		
+        str = str.substring(2, str.length);
+		len = len - 2;
+    }
+
+    return result;
+}
+
+function getHex(hex)
+{
+	hex = hex.replace(/\r\n/g, '\n');
+	hex = hex.replace(/ /g, '');
+	var lines = hex.split('\n');
+	var errors = 0;
+	
+	for(var l=0; l<lines.length; l++)
+	{
+		var line = lines[l];
+		if(line.length > 0)
+		{
+			if(line.length&1)
+			{
+				if(':' == line.charAt(0))
+				{
+					if(line.length > 10)
+					{		
+						var idx = 1;
+						var len = line.slice(idx,idx+2)
+						idx+=2;
+						var addr = line.slice(idx,idx+4)
+						idx+=4;
+						var rectype = line.slice(idx,idx+2)
+						idx+=2;
+
+						var zz = line.length - (idx+2);
+						var data = line.slice(idx,idx+zz)
+						var data_arr = [];
+						data_arr = parseHexString(data);
+						gdata_hex.push(...data_arr);
+						idx+=zz;
+
+						var chksum = line.slice(idx,idx+2)
+					}
+					else
+					{
+						//Error: Lines must be at least 11 chars long
+						errors = 1;
+						break;
+					}
+				}
+				else
+				{
+					//Error: Lines must start with a colon', div
+					errors = 2;
+					break;
+				}
+			}
+			else
+			{
+				//Error: even number of chars ('+line.length+')
+				errors = 3;
+				break;
+			}
+		}
+	}
+	return errors;
+}
+
+function makeLoadAddress(addressL, addressH)
+{
+	gCmdLen = 0;
+	gCmd[gCmdLen++] = STK_LOAD_ADDRESS;
+	gCmd[gCmdLen++] = addressL;
+	gCmd[gCmdLen++] = addressH;
+	gCmd[gCmdLen++] = CRC_EOP ;
+}
+
+function makeFlash(addressL, addressH)
+{
+	gCmdLen = 0;
+	gCmd.set([], 0);
+	gCmd[gCmdLen++] = STK_PROG_PAGE;
+	gCmd[gCmdLen++] = 0x00;
+	gCmd[gCmdLen++] = 0x80;
+	gCmd[gCmdLen++] = 0x46;//'F'
+	if(gdata_hex_len > PAGE_SIZE)
+	{
+		for(i = 0; i < PAGE_SIZE; i++)
+		{
+			gCmd[gCmdLen++] = gdata_hex[gCnt*PAGE_SIZE + i]
+		}
+		gdata_hex_len -= PAGE_SIZE;
+	}else{
+		for(i = 0; i < gdata_hex_len; i++)
+		{
+			gCmd[gCmdLen++] = gdata_hex[gCnt*PAGE_SIZE + i]
+		}
+		gdata_hex_len = 0;
+	}
+	gCmd[gCmdLen++] = CRC_EOP ;
+	gCnt++;
+	gdata_hex_pages_cnt--;
+}
+
+function makeCommand(cmd)
+{
+	gCmd.set([], 0);
+	for( gCmdLen = 0; gCmdLen < cmd.length; gCmdLen++ )
+	{
+		gCmd[gCmdLen] = cmd[gCmdLen];
+	}
+}
+
+function Programming()
+{
+		switch(gState){
+			case STK_GET_SYNC:
+				makeCommand(gSyncCmd);
+				++gCnt;
+				if(gCnt >= 3)
+				{
+					gCnt = 0;
+					gState = STK_GET_PARAMETER;
+				}
+				break;
+			case STK_GET_PARAMETER:
+				if(gCnt == 0)
+				{
+					makeCommand(gGetParamMajorCmd);
+					gCnt = 1;
+				}else{
+					makeCommand(gGetParamMinorCmd);
+					gCnt = 0;
+					gState = STK_SET_DEVICE;
+				}
+				break;
+			case STK_SET_DEVICE :
+				makeCommand(gStkSetDevCmd);
+				gState = STK_SET_DEVICE_EXT;
+				break;
+			case STK_SET_DEVICE_EXT:
+				makeCommand(gStkSetDevExtCmd);
+				gState = STK_ENTER_PROGMODE;
+				break;
+			case STK_ENTER_PROGMODE:
+				makeCommand(gEnterProgramModeCmd);
+				gState = STK_READ_SIGN;
+				break;
+			case STK_READ_SIGN:
+				makeCommand(gReadSignCmd);
+				gState = STK_UNIVERSAL;	
+				break;
+			case STK_UNIVERSAL:
+				if(gCnt == 0)
+				{
+					makeCommand(gUniversalCmd);
+					gCnt = 1;
+				}else{
+					makeCommand(gUniversal2Cmd);
+					gCnt = 0;
+					gState = STK_LOAD_ADDRESS;
+				}
+				break;
+			case STK_LOAD_ADDRESS:
+				if(gdata_hex_pages_cnt > 0)
+				{			
+					var add = gCnt*0x40;
+					var addL = add & 0xFF;
+					var addH = (add >> 8) & 0xFF;
+					makeLoadAddress(addL,addH);
+					if(gProgWrite){
+						gState = STK_PROG_PAGE;
+					}else{
+						gCnt = 0;
+						gdata_hex_len = gdata_hex.length;
+						gdata_hex_pages_cnt = Math.ceil(gdata_hex_len/128)
+						gState = STK_READ_PAGE;
+						gProgWrite = 0;
+					}					
+				}else{
+					gCnt = 0;
+					gdata_hex_len = gdata_hex.length;
+					gdata_hex_pages_cnt = Math.ceil(gdata_hex_len/128)
+					gState = STK_LOAD_ADDRESS;
+					gProgWrite = 0;
+				}
+				break;
+			case STK_PROG_PAGE:
+				makeFlash();
+				gState = STK_LOAD_ADDRESS;
+				break;
+			case STK_READ_PAGE:
+				makeCommand(gReadPageCmd);
+				gState = STK_LEAVE_PROGMODE;
+				break;
+			case STK_LEAVE_PROGMODE:
+				makeCommand(gLeavProgCmd);
+				gState = STATE_STOP;
+				break;
+			case STATE_STOP:
+				gCmdLen = 0;
+				gCmd.set([], 0);
+				return;
+	}
+
+	var ba = gCmd.subarray(0,gCmdLen);
+	var dataframe_cmd = document.getElementById("dataframe_cmd");
+	
+	dataframe_cmd.innerHTML += 'send:<pre style="font-family:Courier;font-size:12px;">' + dump(ba) + '</pre>';
+	
+	var cmdXHR = new XMLHttpRequest();
+	cmdXHR.open("POST", "/cmd?", true);
+	cmdXHR.overrideMimeType('text/plain; charset=x-user-defined');
+	cmdXHR.responseType = "arraybuffer";
+	cmdXHR.onreadystatechange = function () {
+		var dataframe_sts = document.getElementById("dataframe_sts");
+		if (cmdXHR.readyState === XMLHttpRequest.DONE) {
+			if (cmdXHR.status === 200) {
+				var res = cmdXHR.response;
+				var ba = new Uint8Array(res);
+				dataframe_sts.innerHTML += 'recv:<pre style="font-family:Courier;font-size:12px;">' + dump(ba) + '</pre>';
+				Programming();
+			}
+		}
+	}
+	cmdXHR.send(ba);
+}
+
+function OnSendBin(){
+	if ( document.getElementById('file_sts').textContent != "File loaded" )
+	{	
+		return;
+	}
+	if ( gState == STATE_STOP )
+	{
+		gState = STK_GET_SYNC;
+		Programming();
+	}
+}
+
+function OnClearDebug(){
+	dataframe_sts.innerHTML = "";
+	dataframe_cmd.innerHTML = "";
+}
+
+function ReadPage(){
+	var addr = parseInt(txtPageAddress.text);
+	
+	switch(gTestState){
+		case 0:
+				makeEnterProgramMode();
+				gTestState++;
+				break;
+		case 1:
+				makeLoadAddress( addr & 0xFF,(addr >> 8) && 0xFF );
+				gTestState++;
+				break;
+		case 2:
+				makeReadPage();
+				gTestState++;
+				break;
+		default:
+				return;
+	}
+	
+	var ba = gCmd.subarray(0,gCmdLen);
+	var dataframe_cmd = document.getElementById("dataframe_cmd");
+	
+	dataframe_cmd.innerHTML += 'send:<pre style="font-family:Courier;font-size:12px;">' + dump(ba) + '</pre>';
+	
+	var cmdXHR = new XMLHttpRequest();
+	cmdXHR.open("POST", "/cmd?", true);
+	cmdXHR.overrideMimeType('text/plain; charset=x-user-defined');
+	cmdXHR.responseType = "arraybuffer";
+	cmdXHR.onreadystatechange = function () {
+		var dataframe_sts = document.getElementById("dataframe_sts");
+		if (cmdXHR.readyState === XMLHttpRequest.DONE) {
+			if (cmdXHR.status === 200) {
+				var res = cmdXHR.response;
+				var ba = new Uint8Array(res);
+				dataframe_sts.innerHTML += 'recv:<pre style="font-family:Courier;font-size:12px;">' + dump(ba) + '</pre>';
+				ReadPage();
+			}
+		}
+	}
+	cmdXHR.send(ba);
+}
+
+function OnReadPage()
+{
+	gTestState = 0;
+	ReadPage();
+}
+
+function dump(ba)
+{
+	var ret = "";
+	if (ba) {
+		for (var j = 0; j < ba.length; j += 16) {
+			ret += "0123456789ABCDEF".charAt(Math.floor(j / 4096) % 16);
+			ret += "0123456789ABCDEF".charAt(Math.floor(j / 256) % 16);
+			ret += "0123456789ABCDEF".charAt(Math.floor(j / 16) % 16);
+			ret += "0123456789ABCDEF".charAt(Math.floor(j / 1) % 16);
+			for (var i = 0; i < 16; i++) {
+				ret += ((i % 4) ? "_" : "__");
+				if (j + i < ba.length) {
+					ret += "0123456789ABCDEF".charAt(Math.floor(ba[j + i] / 16));
+					ret += "0123456789ABCDEF".charAt(Math.floor(ba[j + i] % 16));
+				} else {
+					ret += "__";
+				}
+			}
+			ret += "__";
+			for (var i = 0; i < 16; i++) {
+				if (j + i < ba.length && ba[j + i] >= 33 && ba[j + i] <= 127 && ba[j + i] != 34 && ba[j + i] != 38 && ba[j + i] != 60 && ba[j + i] != 62) {
+					ret += String.fromCharCode(ba[j + i]);
+				} else {
+					ret += "_";
+				}
+			}
+			ret += ("\n");
+		}
+	}
+	return ret;
+}
+
+</script>
+</head>
+<body onload="Init()">
+<form action='#' onsubmit="return false;">
+<td>Choose hex file => Click "Load" button => click "Upload Firm"</td>
+<br>
+<input type='file' id='fileinput'>
+<input type='button' id='btnLoad' value='Load' onclick='OnLoadFile();'>
+<input type='button' id='btnSend' value='Update Firm' onclick='OnSendBin()'>
+<td><div id='file_sts'></div></td>
+<td>Page Address: <input type="text" id='txtPageAddress' value="Input address"></td>
+<input type='button' id='btnReadPage' value='Read Page' onclick='OnReadPage()'>
+<input type='button' id='btnClearDebug' value='Clear' onclick='OnClearDebug()'>
+</br>
+<div><span id="dataframe_cmd" style="font-family:Courier;font-size:18px;"></span></div>
+<div><span id="dataframe_sts" style="font-family:Courier;font-size:18px;"></span></div>
+</form>
+</body>
+</html>

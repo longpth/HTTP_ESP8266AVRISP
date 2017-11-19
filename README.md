@@ -17,7 +17,7 @@ GPIO14(D5)-->SCK
 any\*------->RESET       
 
 License and Authors
-~~~~~~~~~~~~~~~~~~~
+--------
 
 This Library is actually ported from library ESP8266AVRISP of Kiril Zyapkov <kiril@robotev.com> from using TCP to HTTP.
 It is combined with ESP8266WebServer library of Ivan Grokhtkov <ivan@esp8266.com> by being created a class which derived from ESP8266WebServer class.

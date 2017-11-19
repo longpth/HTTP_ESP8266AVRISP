@@ -121,6 +121,6 @@ void loop() {
       ledState = LOW;   // Note that this switches the LED *on*
     digitalWrite(LED_OUT, ledState);
   }
-  server.handleClient();
+  server.handleClient2();
 }
 
